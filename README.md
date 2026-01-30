@@ -154,14 +154,17 @@ Connect to `ws://localhost:8765/ws` and send/receive JSON messages:
 - [x] Basic WebSocket voice gateway
 - [x] Whisper STT integration
 - [x] Chatterbox TTS integration
+- [x] Voice Activity Detection (VAD)
+- [x] Streaming responses
+- [x] Docker GPU support
+- [x] React component (`@openclaw/voice-widget-react`)
+- [x] API key authentication
+- [x] Continuous conversation mode
 - [ ] WebRTC for lower latency
-- [ ] Voice Activity Detection (VAD)
-- [ ] Streaming responses
 - [ ] Voice cloning UI
-- [ ] Browser widget npm package
-- [ ] React/Vue components
-- [ ] Docker GPU support
+- [ ] Vue component
 - [ ] Kubernetes Helm chart
+- [ ] RunPod template
 
 ## Hosted Service (Coming Soon)
 

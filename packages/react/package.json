@@ -1,0 +1,41 @@
+{
+  "name": "@openclaw/voice-widget-react",
+  "version": "0.1.0",
+  "description": "React component for OpenClaw Voice - self-hosted voice AI interface",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.tsx --format cjs,esm --dts",
+    "dev": "tsup src/index.tsx --format cjs,esm --dts --watch"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "react": "^18.2.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "voice",
+    "ai",
+    "react",
+    "speech",
+    "whisper",
+    "tts",
+    "openclaw"
+  ],
+  "author": "Purple Horizons <hello@purplehorizons.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Purple-Horizons/openclaw-voice.git",
+    "directory": "packages/react"
+  }
+}

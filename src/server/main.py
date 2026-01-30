@@ -283,6 +283,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 audio_np = np.frombuffer(audio_bytes, dtype=np.float32)
                 audio_buffer.append(audio_np)
                 
+                # VAD check - notify client if speech detected
+                if vad and len(audio_np) > 0:
+                    has_speech = vad.is_speech(audio_np)
+                    await websocket.send_json({
+                        "type": "vad_status",
+                        "speech_detected": has_speech,
+                    })
+                
             elif msg["type"] == "ping":
                 await websocket.send_json({"type": "pong"})
                 
