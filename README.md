@@ -163,6 +163,30 @@ Connect to `ws://localhost:8765/ws` and send/receive JSON messages:
 - [ ] Docker GPU support
 - [ ] Kubernetes Helm chart
 
+## Hosted Service (Coming Soon)
+
+Don't want to self-host? We offer a managed service:
+
+| Tier | Minutes/Month | Price | Features |
+|------|---------------|-------|----------|
+| **Free** | 60 | $0 | Basic voice chat |
+| **Pro** | 500 | $29/mo | + Voice cloning |
+| **Enterprise** | Unlimited | $99/mo | + Priority, SLA |
+
+**API Key Authentication:**
+
+```bash
+# Get an API key
+curl -X POST "https://voice.openclaw.dev/api/keys?name=myapp&tier=pro" \
+     -H "x-master-key: YOUR_MASTER_KEY"
+
+# Connect with API key
+wss://voice.openclaw.dev/ws?api_key=ocv_xxxxx
+
+# Check usage
+curl "https://voice.openclaw.dev/api/usage?api_key=ocv_xxxxx"
+```
+
 ## Cost Comparison
 
 | Platform | Cost/Minute |
@@ -170,6 +194,7 @@ Connect to `ws://localhost:8765/ws` and send/receive JSON messages:
 | ElevenLabs Conversational AI | $0.08-0.12 |
 | Retell.ai | $0.13-0.31 |
 | Vapi.ai | $0.05-0.15 |
+| **OpenClaw Voice (hosted)** | **~$0.06** |
 | **OpenClaw Voice (self-hosted)** | **~$0.003** |
 
 ## Contributing

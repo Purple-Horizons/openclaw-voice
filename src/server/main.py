@@ -27,6 +27,7 @@ from .stt import WhisperSTT
 from .tts import ChatterboxTTS
 from .backend import AIBackend
 from .vad import VoiceActivityDetector
+from .auth import token_manager, load_keys_from_env, APIKey
 
 
 class Settings(BaseSettings):
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8765
+    
+    # Auth
+    require_auth: bool = False  # Set True for production
+    master_key: Optional[str] = None  # Admin key for full access
     
     # STT
     stt_model: str = "base"  # tiny, base, small, medium, large-v3-turbo
@@ -75,6 +80,13 @@ async def startup():
     
     logger.info("Initializing OpenClaw Voice server...")
     
+    # Load API keys
+    load_keys_from_env()
+    if settings.require_auth:
+        logger.info("🔐 Authentication ENABLED")
+    else:
+        logger.warning("⚠️ Authentication DISABLED (dev mode)")
+    
     # Initialize STT
     logger.info(f"Loading STT model: {settings.stt_model}")
     stt = WhisperSTT(
@@ -110,14 +122,103 @@ async def index():
     return FileResponse("src/client/index.html")
 
 
+@app.post("/api/keys")
+async def create_api_key(
+    name: str,
+    tier: str = "free",
+    master_key: Optional[str] = None,
+):
+    """
+    Create a new API key (requires master key).
+    
+    curl -X POST "http://localhost:8765/api/keys?name=myapp&tier=pro" \
+         -H "x-master-key: YOUR_MASTER_KEY"
+    """
+    # Verify master key
+    if settings.require_auth:
+        if not master_key and not settings.master_key:
+            return {"error": "Master key required"}
+        
+        provided_key = master_key or ""
+        if provided_key != settings.master_key:
+            # Also check if it's a valid master-tier key
+            key = token_manager.validate_key(provided_key)
+            if not key or key.tier != "enterprise":
+                return {"error": "Invalid master key"}
+    
+    from .auth import PRICING_TIERS
+    
+    if tier not in PRICING_TIERS:
+        return {"error": f"Invalid tier. Options: {list(PRICING_TIERS.keys())}"}
+    
+    tier_config = PRICING_TIERS[tier]
+    
+    plaintext_key, api_key = token_manager.generate_key(
+        name=name,
+        tier=tier,
+        rate_limit=tier_config["rate_limit"],
+        monthly_minutes=tier_config["monthly_minutes"],
+    )
+    
+    return {
+        "api_key": plaintext_key,  # Only shown once!
+        "key_id": api_key.key_id,
+        "name": api_key.name,
+        "tier": api_key.tier,
+        "monthly_minutes": api_key.monthly_minutes,
+        "rate_limit": api_key.rate_limit_per_minute,
+    }
+
+
+@app.get("/api/usage")
+async def get_usage(api_key: str):
+    """
+    Get usage stats for an API key.
+    
+    curl "http://localhost:8765/api/usage?api_key=ocv_xxx"
+    """
+    key = token_manager.validate_key(api_key)
+    if not key:
+        return {"error": "Invalid API key"}
+    
+    return token_manager.get_usage(key)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """Handle voice WebSocket connections."""
+    # Check for API key in query params or headers
+    api_key_str = websocket.query_params.get("api_key") or \
+                  websocket.headers.get("x-api-key")
+    
+    api_key: Optional[APIKey] = None
+    
+    if settings.require_auth:
+        if not api_key_str:
+            await websocket.close(code=4001, reason="API key required")
+            return
+        
+        api_key = token_manager.validate_key(api_key_str)
+        if not api_key:
+            await websocket.close(code=4002, reason="Invalid API key")
+            return
+        
+        if not token_manager.check_rate_limit(api_key):
+            await websocket.close(code=4003, reason="Rate limit exceeded")
+            return
+        
+        logger.info(f"Client connected: {api_key.name} (tier={api_key.tier})")
+    else:
+        # Dev mode - allow all
+        if api_key_str:
+            api_key = token_manager.validate_key(api_key_str)
+        logger.info("Client connected (auth disabled)")
+    
     await websocket.accept()
-    logger.info("Client connected")
     
     audio_buffer = []
     is_listening = False
+    session_start = None
     
     try:
         while True:

@@ -286,10 +286,19 @@
         let silenceTimer = null;
         let silenceThreshold = 1500; // ms of silence before stopping
         
+        // Get API key from URL params or localStorage
+        function getApiKey() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('api_key') || localStorage.getItem('openclaw_api_key') || '';
+        }
+        
         // Connect to WebSocket
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            const apiKey = getApiKey();
+            const wsUrl = apiKey 
+                ? `${protocol}//${window.location.host}/ws?api_key=${apiKey}`
+                : `${protocol}//${window.location.host}/ws`;
             
             ws = new WebSocket(wsUrl);
             
@@ -298,9 +307,20 @@
                 errorEl.textContent = '';
             };
             
-            ws.onclose = () => {
-                setStatus('Disconnected - reconnecting...');
-                setTimeout(connect, 2000);
+            ws.onclose = (event) => {
+                if (event.code === 4001) {
+                    setStatus('❌ API key required');
+                    errorEl.textContent = 'This server requires an API key. Add ?api_key=YOUR_KEY to the URL.';
+                } else if (event.code === 4002) {
+                    setStatus('❌ Invalid API key');
+                    errorEl.textContent = 'Your API key is invalid or expired.';
+                } else if (event.code === 4003) {
+                    setStatus('❌ Rate limited');
+                    errorEl.textContent = 'Too many requests. Please wait and try again.';
+                } else {
+                    setStatus('Disconnected - reconnecting...');
+                    setTimeout(connect, 2000);
+                }
             };
             
             ws.onerror = (e) => {
