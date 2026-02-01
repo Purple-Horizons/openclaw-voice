@@ -1,8 +1,9 @@
 """
-Text-to-Speech module using Chatterbox or fallbacks.
+Text-to-Speech module using ElevenLabs, Chatterbox, or fallbacks.
 """
 
 import asyncio
+import os
 from typing import Optional
 from pathlib import Path
 
@@ -11,22 +12,49 @@ from loguru import logger
 
 
 class ChatterboxTTS:
-    """Text-to-Speech using Chatterbox or fallbacks."""
+    """Text-to-Speech using ElevenLabs, Chatterbox, or fallbacks."""
     
     def __init__(
         self,
         voice_sample: Optional[str] = None,
         device: str = "auto",
+        voice_id: Optional[str] = None,  # ElevenLabs voice ID
     ):
         self.voice_sample = voice_sample
         self.device = device
+        self.voice_id = voice_id or "cgSgspJ2msm6clMCkdW9"  # Jessica
         self.model = None
         self._backend = "mock"
+        self._elevenlabs_client = None
         self._load_model()
     
     def _load_model(self):
         """Load the TTS model."""
-        # Try Chatterbox
+        # Try ElevenLabs first (cloud, high quality)
+        elevenlabs_key = os.environ.get("ELEVENLABS_API_KEY")
+        if elevenlabs_key:
+            try:
+                from elevenlabs import ElevenLabs
+                self._elevenlabs_client = ElevenLabs(api_key=elevenlabs_key)
+                self._backend = "elevenlabs"
+                logger.info("✅ ElevenLabs TTS ready")
+                return
+            except ImportError:
+                logger.warning("ElevenLabs SDK not installed, trying pip install...")
+                try:
+                    import subprocess
+                    subprocess.check_call(["pip", "install", "elevenlabs", "-q"])
+                    from elevenlabs import ElevenLabs
+                    self._elevenlabs_client = ElevenLabs(api_key=elevenlabs_key)
+                    self._backend = "elevenlabs"
+                    logger.info("✅ ElevenLabs TTS ready (auto-installed)")
+                    return
+                except Exception as e:
+                    logger.warning(f"ElevenLabs auto-install failed: {e}")
+            except Exception as e:
+                logger.warning(f"ElevenLabs failed: {e}")
+        
+        # Try Chatterbox (self-hosted)
         try:
             from chatterbox.tts import ChatterboxTTS as CBModel
             logger.info("Loading Chatterbox TTS...")
@@ -76,7 +104,26 @@ class ChatterboxTTS:
     
     def _synthesize_sync(self, text: str) -> np.ndarray:
         """Synchronous synthesis."""
-        if self._backend == "chatterbox":
+        if self._backend == "elevenlabs":
+            try:
+                # Generate audio with ElevenLabs
+                audio_generator = self._elevenlabs_client.text_to_speech.convert(
+                    voice_id=self.voice_id,
+                    text=text,
+                    model_id="eleven_monolingual_v1",
+                    output_format="pcm_24000",  # 24kHz PCM (matches server expectation)
+                )
+                # Collect all chunks
+                audio_bytes = b"".join(audio_generator)
+                # Convert PCM bytes to numpy array
+                audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                # Normalize to float32 [-1, 1]
+                return audio_array.astype(np.float32) / 32768.0
+            except Exception as e:
+                logger.error(f"ElevenLabs TTS error: {e}")
+                return np.zeros(16000, dtype=np.float32)  # 1 sec silence on error
+        
+        elif self._backend == "chatterbox":
             if self.voice_sample:
                 audio = self.model.generate(text, audio_prompt=self.voice_sample)
             else:

@@ -52,7 +52,7 @@ class TestChatterboxTTS:
         """Test that TTS initializes (may be mock or real)."""
         tts = ChatterboxTTS()
         assert tts is not None
-        assert tts._backend in ["chatterbox", "xtts", "pyttsx3", "mock"]
+        assert tts._backend in ["elevenlabs", "chatterbox", "xtts", "pyttsx3", "mock"]
     
     @pytest.mark.asyncio
     async def test_synthesize_returns_audio(self):
