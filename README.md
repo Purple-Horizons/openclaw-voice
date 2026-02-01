@@ -17,7 +17,8 @@ Voice AI platforms like ElevenLabs Agents ($0.08-0.12/min) and Retell.ai ($0.13-
 - 🚗 **Continuous mode** — Like Grok voice. Auto-listens after each response. Perfect for Tesla browser!
 - 🔊 **Self-hosted STT** — Whisper Large V3 Turbo (runs on Mac/Linux/GPU)
 - 🗣️ **Self-hosted TTS** — Chatterbox (MIT license, ElevenLabs quality)
-- 🔌 **Pluggable backend** — Connect to any AI (OpenAI, Claude, Clawdbot, etc.)
+- 🔌 **Pluggable backend** — Connect to any AI (OpenAI, Claude, OpenClaw gateway, etc.)
+- 🦞 **OpenClaw integration** — Full agent context, memory, and tools via gateway
 - 🌐 **WebRTC audio** — Low latency (<500ms end-to-end achievable)
 - 🏠 **Fully self-hosted** — Your data stays on your servers
 
@@ -70,27 +71,45 @@ docker compose up
               └───────────┘          └───────────────┘        └─────────────┘
 ```
 
+## OpenClaw Gateway Integration
+
+For full agent capabilities (memory, tools, context), connect to OpenClaw's gateway:
+
+```bash
+# .env
+CLAWDBOT_GATEWAY_URL=http://localhost:18789
+CLAWDBOT_GATEWAY_TOKEN=your-gateway-token
+ELEVENLABS_API_KEY=your-elevenlabs-key
+```
+
+Enable chatCompletions in your `openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true }
+      }
+    }
+  },
+  "agents": {
+    "list": [{ "id": "voice", "workspace": "/your/workspace" }]
+  }
+}
+```
+
+Now voice chat routes through your full agent — same context as text chats.
+
 ## Configuration
 
-```yaml
-# config.yaml
-stt:
-  model: "whisper-large-v3-turbo"
-  device: "cuda"  # or "cpu", "mps" (Mac)
-
-tts:
-  model: "chatterbox"
-  voice: "default"  # or path to voice sample for cloning
-
-backend:
-  type: "openai"  # or "clawdbot", "custom"
-  url: "https://api.openai.com/v1"
-  model: "gpt-4o"
-
-server:
-  host: "0.0.0.0"
-  port: 8765
-  ssl: false  # Set true + provide certs for production
+```bash
+# Via environment variables (.env)
+OPENCLAW_STT_MODEL=base          # tiny, base, small, medium, large-v3-turbo
+OPENCLAW_STT_DEVICE=auto         # auto, cpu, cuda, mps
+OPENCLAW_TTS_MODEL=chatterbox    # chatterbox, xtts, mock
+OPENCLAW_PORT=8765
+OPENCLAW_REQUIRE_AUTH=false      # Set true for production
 ```
 
 ## Supported Models
@@ -213,7 +232,7 @@ MIT License — see [LICENSE](LICENSE).
 - [Whisper](https://github.com/openai/whisper) — OpenAI
 - [Chatterbox](https://github.com/resemble-ai/chatterbox) — Resemble AI
 - [Silero VAD](https://github.com/snakers4/silero-vad) — Silero
-- Built for [Clawdbot](https://github.com/clawdbot/clawdbot)
+- Built for [OpenClaw](https://openclaw.ai)
 
 ---
 
