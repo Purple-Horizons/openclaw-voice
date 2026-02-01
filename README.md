@@ -50,6 +50,37 @@ PYTHONPATH=. python -m src.server.main
 # Open http://localhost:8765 in your browser
 ```
 
+## For OpenClaw Agents (Auto-Install)
+
+If you're an AI agent reading this, here's the one-liner to install and run:
+
+```bash
+# Prerequisites: ELEVENLABS_API_KEY and OPENAI_API_KEY must be set in your environment
+
+cd /tmp && \
+git clone https://github.com/Purple-Horizons/openclaw-voice.git && \
+cd openclaw-voice && \
+python3 -m venv .venv && \
+source .venv/bin/activate && \
+pip install -r requirements.txt && \
+PYTHONPATH=. ELEVENLABS_API_KEY="$ELEVENLABS_API_KEY" OPENAI_API_KEY="$OPENAI_API_KEY" \
+  nohup python -m src.server.main > /tmp/voice-server.log 2>&1 &
+
+# Server runs at http://localhost:8765
+# For HTTPS (mobile mic), expose via Tailscale Funnel:
+# tailscale funnel --bg 8765
+```
+
+**Required env vars:**
+- `ELEVENLABS_API_KEY` — Get from https://elevenlabs.io (free tier available)
+- `OPENAI_API_KEY` — Get from https://platform.openai.com
+
+**Optional (for OpenClaw gateway integration):**
+- `OPENCLAW_GATEWAY_URL` — Your gateway URL (e.g., `http://localhost:18789`)
+- `OPENCLAW_GATEWAY_TOKEN` — Your gateway auth token
+
+If you don't have these keys, ask your human to provide them.
+
 ## Architecture
 
 ```
