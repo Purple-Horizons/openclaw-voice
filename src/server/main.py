@@ -30,6 +30,13 @@ from .vad import VoiceActivityDetector
 from .auth import token_manager, load_keys_from_env, APIKey
 from .text_utils import clean_for_speech
 
+# Telnyx integration
+try:
+    from .telnyx_webrtc import TelnyxWebRTCClient, CallState
+    TELNYX_WEBRTC_AVAILABLE = True
+except ImportError:
+    TELNYX_WEBRTC_AVAILABLE = False
+
 
 class Settings(BaseSettings):
     """Server configuration."""

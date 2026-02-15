@@ -1,5 +1,12 @@
 """
-Text-to-Speech module using ElevenLabs, Chatterbox, or fallbacks.
+Text-to-Speech module using ElevenLabs, Telnyx, Chatterbox, or fallbacks.
+
+Supported providers:
+    - ElevenLabs (cloud, high quality, streaming)
+    - Telnyx (cloud, cost-effective, streaming via AI Inference API)
+    - Chatterbox (local, voice cloning)
+    - XTTS (local, voice cloning)
+    - Mock (testing)
 """
 
 import asyncio
@@ -53,6 +60,20 @@ class ChatterboxTTS:
                     logger.warning(f"ElevenLabs auto-install failed: {e}")
             except Exception as e:
                 logger.warning(f"ElevenLabs failed: {e}")
+        
+        # Try Telnyx TTS (cloud, cost-effective)
+        telnyx_key = os.environ.get("TELNYX_API_KEY")
+        if telnyx_key:
+            try:
+                from .telnyx_tts import TelnyxTTS
+                self._telnyx_tts = TelnyxTTS(api_key=telnyx_key)
+                self._backend = "telnyx"
+                logger.info("✅ Telnyx TTS ready")
+                return
+            except ImportError as e:
+                logger.warning(f"Telnyx TTS module not available: {e}")
+            except Exception as e:
+                logger.warning(f"Telnyx TTS failed: {e}")
         
         # Try Chatterbox (self-hosted)
         try:
@@ -122,6 +143,12 @@ class ChatterboxTTS:
                     yield chunk
             except Exception as e:
                 logger.error(f"ElevenLabs streaming error: {e}")
+        elif self._backend == "telnyx":
+            try:
+                async for chunk in self._telnyx_tts.synthesize_stream(text):
+                    yield chunk
+            except Exception as e:
+                logger.error(f"Telnyx TTS streaming error: {e}")
         else:
             # Non-streaming fallback
             audio = await self.synthesize(text)
@@ -147,6 +174,25 @@ class ChatterboxTTS:
             except Exception as e:
                 logger.error(f"ElevenLabs TTS error: {e}")
                 return np.zeros(16000, dtype=np.float32)  # 1 sec silence on error
+        
+        elif self._backend == "telnyx":
+            # Telnyx uses async, so we need to run in event loop
+            try:
+                loop = asyncio.new_event_loop()
+                audio_bytes = b""
+                async def collect():
+                    nonlocal audio_bytes
+                    async for chunk in self._telnyx_tts.synthesize_stream(text):
+                        audio_bytes += chunk
+                loop.run_until_complete(collect())
+                loop.close()
+                if audio_bytes:
+                    audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                    return audio_array.astype(np.float32) / 32768.0
+                return np.zeros(16000, dtype=np.float32)
+            except Exception as e:
+                logger.error(f"Telnyx TTS error: {e}")
+                return np.zeros(16000, dtype=np.float32)
         
         elif self._backend == "chatterbox":
             if self.voice_sample:

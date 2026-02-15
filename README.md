@@ -92,11 +92,22 @@ PYTHONPATH=. ELEVENLABS_API_KEY="$ELEVENLABS_API_KEY" OPENAI_API_KEY="$OPENAI_AP
 | Backend | Type | Quality | Latency | Notes |
 |---------|------|---------|---------|-------|
 | **ElevenLabs** | Cloud | Excellent | ~500ms | Default. Streaming supported. |
+| **Telnyx** | Cloud | Very Good | ~300ms | Cost-effective. Streaming supported. |
 | Chatterbox | Local | Very Good | ~1s | MIT license, voice cloning |
 | XTTS-v2 | Local | Excellent | ~1s | Voice cloning supported |
 | Mock | Local | None | 0ms | For testing (silence) |
 
 ElevenLabs uses `eleven_turbo_v2_5` for fastest response.
+Telnyx uses OpenAI-compatible TTS API via `api.telnyx.com/v2/ai`.
+
+### STT Options
+
+| Backend | Type | Quality | Latency | Notes |
+|---------|------|---------|---------|-------|
+| **Telnyx** | Cloud | Excellent | ~200ms | No GPU required. OpenAI-compatible. |
+| faster-whisper | Local | Excellent | ~500ms | GPU accelerated. Default if no cloud. |
+| openai-whisper | Local | Good | ~1s | CPU fallback |
+| Mock | Local | None | 0ms | For testing |
 
 ## OpenClaw Gateway Integration
 
@@ -153,6 +164,44 @@ Add to your `openclaw.json`:
 3. First sentence complete → TTS starts immediately
 4. Audio streams to browser while AI continues
 5. Result: ~50% faster perceived response
+
+## Telnyx Integration
+
+OpenClaw Voice supports Telnyx as an alternative provider for STT, TTS, and phone calling.
+
+### Cloud STT/TTS
+
+Set `TELNYX_API_KEY` to use Telnyx AI Inference API instead of running Whisper locally:
+
+```bash
+# .env
+TELNYX_API_KEY=your-telnyx-api-key
+```
+
+Benefits:
+- No GPU required for STT
+- Lower latency for cold starts
+- Cost-effective at scale
+
+### Phone Calling (WebRTC)
+
+Enable AI-to-phone calls via Telnyx WebRTC:
+
+```bash
+# .env
+TELNYX_API_KEY=your-telnyx-api-key
+TELNYX_SIP_USERNAME=your-sip-username
+TELNYX_SIP_PASSWORD=your-sip-password
+TELNYX_CALLER_ID=+15551234567
+```
+
+The `TelnyxWebRTCClient` enables:
+- Outbound calls to any phone number
+- Inbound call handling
+- Bidirectional audio streaming
+- DTMF tone support for IVR
+
+See `src/server/telnyx_webrtc.py` for API details.
 
 ## HTTPS for Mobile
 
@@ -213,7 +262,9 @@ Connect to `ws://localhost:8765/ws`:
 - [x] Text cleaning (markdown/hashtags/URLs)
 - [x] Continuous conversation mode
 - [x] OpenClaw gateway integration
-- [ ] WebRTC for lower latency
+- [x] Telnyx STT/TTS integration
+- [x] Telnyx WebRTC phone calling
+- [ ] WebRTC for browser lower latency
 - [ ] Voice cloning UI
 - [ ] Docker support
 
