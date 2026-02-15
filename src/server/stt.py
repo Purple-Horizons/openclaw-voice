@@ -1,8 +1,15 @@
 """
 Speech-to-Text module using Whisper.
+
+Supported providers:
+    - faster-whisper (local, GPU accelerated)
+    - openai-whisper (local)
+    - Telnyx AI Inference API (cloud, OpenAI-compatible)
+    - Mock (testing)
 """
 
 import asyncio
+import os
 from typing import Optional
 
 import numpy as np
@@ -17,16 +24,32 @@ class WhisperSTT:
         model_name: str = "base",
         device: str = "auto",
         language: str = "en",
+        use_telnyx: bool = False,  # Use Telnyx cloud STT
     ):
         self.model_name = model_name
         self.device = device
         self.language = language
+        self.use_telnyx = use_telnyx or bool(os.environ.get("TELNYX_API_KEY") and not os.environ.get("OPENAI_API_KEY"))
         self.model = None
         self._backend = "mock"
+        self._telnyx_stt = None
         self._load_model()
     
     def _load_model(self):
         """Load the Whisper model."""
+        # Try Telnyx cloud STT first if requested or if no local resources
+        if self.use_telnyx:
+            try:
+                from .telnyx_stt import TelnyxSTT
+                self._telnyx_stt = TelnyxSTT(language=self.language)
+                self._backend = "telnyx"
+                logger.info("✅ Telnyx cloud STT ready")
+                return
+            except ImportError:
+                logger.warning("Telnyx STT module not available")
+            except Exception as e:
+                logger.warning(f"Telnyx STT failed: {e}")
+        
         # Try faster-whisper first
         try:
             from faster_whisper import WhisperModel
@@ -90,7 +113,18 @@ class WhisperSTT:
     
     def _transcribe_sync(self, audio: np.ndarray) -> str:
         """Synchronous transcription."""
-        if self._backend == "faster-whisper":
+        if self._backend == "telnyx":
+            # Telnyx uses async, run in event loop
+            try:
+                loop = asyncio.new_event_loop()
+                result = loop.run_until_complete(self._telnyx_stt.transcribe(audio))
+                loop.close()
+                return result
+            except Exception as e:
+                logger.error(f"Telnyx STT error: {e}")
+                return ""
+        
+        elif self._backend == "faster-whisper":
             segments, info = self.model.transcribe(
                 audio,
                 language=self.language,
