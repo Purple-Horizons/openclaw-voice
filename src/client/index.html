@@ -435,6 +435,18 @@
             }
         }
         
+        // Shared playback AudioContext (browsers limit concurrent contexts)
+        let playbackCtx = null;
+        function getPlaybackCtx(sampleRate) {
+            if (!playbackCtx || playbackCtx.state === 'closed') {
+                playbackCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+            }
+            if (playbackCtx.state === 'suspended') {
+                playbackCtx.resume();
+            }
+            return playbackCtx;
+        }
+        
         async function playNextInQueue() {
             if (audioQueue.length === 0) {
                 isPlayingQueue = false;
@@ -453,26 +465,28 @@
                     bytes[i] = binaryString.charCodeAt(i);
                 }
                 
-                // Convert to Int16 then Float32
+                // Convert Int16 PCM to Float32
                 const int16 = new Int16Array(bytes.buffer);
                 const float32 = new Float32Array(int16.length);
                 for (let i = 0; i < int16.length; i++) {
                     float32[i] = int16[i] / 32768.0;
                 }
                 
-                // Create audio buffer and play
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
-                const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+                if (!playbackCtx || playbackCtx.state === 'closed') {
+                    playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (playbackCtx.state === 'suspended') {
+                    await playbackCtx.resume();
+                }
+                const buffer = playbackCtx.createBuffer(1, float32.length, sampleRate);
                 buffer.copyToChannel(float32, 0);
                 
-                const source = audioCtx.createBufferSource();
+                const source = playbackCtx.createBufferSource();
                 source.buffer = buffer;
-                source.connect(audioCtx.destination);
-                source.onended = () => {
-                    audioCtx.close();
-                    playNextInQueue();
-                };
+                source.connect(playbackCtx.destination);
+                source.onended = () => playNextInQueue();
                 source.start(0);
+                console.log(`Playing chunk: ${float32.length} samples, state=${playbackCtx.state}, max=${Math.max(...float32.slice(0,100).map(Math.abs)).toFixed(3)}`);
             } catch (e) {
                 console.error('Audio playback error:', e);
                 playNextInQueue();
@@ -547,33 +561,95 @@
                     });
                 }
                 
-                audioContext = new AudioContext({ sampleRate: 16000 });
+                audioContext = new AudioContext();  // Use native sample rate (Safari ignores 16kHz)
+                console.log('AudioContext sample rate:', audioContext.sampleRate);
                 audioSource = audioContext.createMediaStreamSource(mediaStream);
-                audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
                 
                 let lastSoundTime = Date.now();
                 
-                audioProcessor.onaudioprocess = (e) => {
+                let audioChunkCount = 0;
+                const sendAudio = (audioData) => {
                     if (isRecording && ws && ws.readyState === WebSocket.OPEN) {
-                        const audioData = e.inputBuffer.getChannelData(0);
+                        audioChunkCount++;
+                        const maxVal = Math.max(...Array.from(audioData).map(Math.abs));
+                        if (audioChunkCount <= 5 || audioChunkCount % 20 === 0) {
+                            console.log(`Audio chunk #${audioChunkCount}: ${audioData.length} samples, max=${maxVal.toFixed(6)}, rate=${audioContext.sampleRate}`);
+                        }
                         const base64 = float32ToBase64(audioData);
-                        ws.send(JSON.stringify({ type: 'audio', data: base64 }));
-                        
-                        // Simple VAD: check if audio has energy
+                        ws.send(JSON.stringify({ type: 'audio', data: base64, sample_rate: audioContext.sampleRate }));
                         if (continuousMode) {
                             const energy = audioData.reduce((sum, val) => sum + Math.abs(val), 0) / audioData.length;
                             if (energy > 0.01) {
                                 lastSoundTime = Date.now();
                             } else if (Date.now() - lastSoundTime > silenceThreshold) {
-                                // Silence detected - stop recording
                                 stopRecording();
                             }
                         }
                     }
                 };
                 
-                audioSource.connect(audioProcessor);
-                audioProcessor.connect(audioContext.destination);
+                // Try AudioWorklet (Chrome/modern), fall back to ScriptProcessor (Safari)
+                if (audioContext.audioWorklet) {
+                    try {
+                        const workletCode = `
+                            class AudioSender extends AudioWorkletProcessor {
+                                constructor() {
+                                    super();
+                                    this.buffer = new Float32Array(4096);
+                                    this.offset = 0;
+                                }
+                                process(inputs) {
+                                    const input = inputs[0];
+                                    if (input.length > 0 && input[0].length > 0) {
+                                        const data = input[0];
+                                        for (let i = 0; i < data.length; i++) {
+                                            this.buffer[this.offset++] = data[i];
+                                            if (this.offset >= 4096) {
+                                                this.port.postMessage(new Float32Array(this.buffer));
+                                                this.offset = 0;
+                                            }
+                                        }
+                                    }
+                                    return true;
+                                }
+                            }
+                            registerProcessor('audio-sender', AudioSender);
+                        `;
+                        const blob = new Blob([workletCode], { type: 'application/javascript' });
+                        const url = URL.createObjectURL(blob);
+                        await audioContext.audioWorklet.addModule(url);
+                        URL.revokeObjectURL(url);
+                        
+                        audioProcessor = new AudioWorkletNode(audioContext, 'audio-sender');
+                        audioProcessor.port.onmessage = (e) => sendAudio(e.data);
+                        audioSource.connect(audioProcessor);
+                        audioProcessor.connect(audioContext.destination);
+                        console.log('Using AudioWorklet for mic capture');
+                    } catch (workletErr) {
+                        console.warn('AudioWorklet failed, falling back:', workletErr);
+                        audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                        audioProcessor.onaudioprocess = (e) => sendAudio(e.inputBuffer.getChannelData(0));
+                        audioSource.connect(audioProcessor);
+                        audioProcessor.connect(audioContext.destination);
+                    }
+                } else {
+                    // Safari fallback
+                    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                    audioProcessor.onaudioprocess = (e) => sendAudio(e.inputBuffer.getChannelData(0));
+                    audioSource.connect(audioProcessor);
+                    audioProcessor.connect(audioContext.destination);
+                    console.log('Using ScriptProcessor for mic capture (Safari)');
+                }
+                
+                // Pre-create playback context during user gesture (Safari requires this)
+                if (!playbackCtx || playbackCtx.state === 'closed') {
+                    playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log('Created playback context during user gesture, state:', playbackCtx.state);
+                }
+                if (playbackCtx.state === 'suspended') {
+                    await playbackCtx.resume();
+                    console.log('Resumed playback context, state:', playbackCtx.state);
+                }
                 
                 isRecording = true;
                 voiceBtn.classList.add('listening');
@@ -624,14 +700,15 @@
         }
         
         function playAudioWithCallback(base64Data, sampleRate, callback) {
-            const audioCtx = new AudioContext({ sampleRate: sampleRate });
+            const ctx = getPlaybackCtx(sampleRate);
+            // Legacy path sends Float32 directly
             const audioData = base64ToFloat32(base64Data);
-            const buffer = audioCtx.createBuffer(1, audioData.length, sampleRate);
+            const buffer = ctx.createBuffer(1, audioData.length, sampleRate);
             buffer.getChannelData(0).set(audioData);
             
-            const source = audioCtx.createBufferSource();
+            const source = ctx.createBufferSource();
             source.buffer = buffer;
-            source.connect(audioCtx.destination);
+            source.connect(ctx.destination);
             
             if (callback) {
                 source.onended = callback;

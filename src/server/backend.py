@@ -18,11 +18,13 @@ class AIBackend:
         model: str = "gpt-4o-mini",
         api_key: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        session_key: Optional[str] = None,
     ):
         self.backend_type = backend_type
         self.url = url
         self.model = model
         self.api_key = api_key
+        self.session_key = session_key
         self.system_prompt = system_prompt or (
             "You are a helpful voice assistant. Keep responses concise and conversational. "
             "Aim for 1-2 sentences unless more detail is needed."
@@ -36,9 +38,14 @@ class AIBackend:
         if self.backend_type == "openai":
             try:
                 from openai import AsyncOpenAI
+                extra_headers = {}
+                if self.session_key:
+                    extra_headers["x-openclaw-session-key"] = self.session_key
+                    logger.info(f"🔗 Session routing: {self.session_key}")
                 self._client = AsyncOpenAI(
                     api_key=self.api_key,
                     base_url=self.url if self.url != "https://api.openai.com/v1" else None,
+                    default_headers=extra_headers if extra_headers else None,
                 )
                 logger.info(f"✅ OpenAI client ready (model: {self.model})")
             except ImportError:

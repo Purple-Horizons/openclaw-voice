@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     # OpenClaw Gateway (auto-detected from OPENCLAW_GATEWAY_URL + TOKEN)
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
+    openclaw_session_key: Optional[str] = None  # Route to specific session (e.g. main)
     
     # Audio
     sample_rate: int = 16000
@@ -111,13 +112,17 @@ async def startup():
     gateway_token = settings.openclaw_gateway_token or os.getenv("OPENCLAW_GATEWAY_TOKEN")
     
     if gateway_url and gateway_token:
-        # Use OpenClaw gateway (connects to Aria!)
+        # Use OpenClaw gateway
+        session_key = settings.openclaw_session_key or os.getenv("OPENCLAW_SESSION_KEY")
         logger.info(f"🦞 Connecting to OpenClaw gateway: {gateway_url}")
+        if session_key:
+            logger.info(f"🔗 Session routing → {session_key}")
         backend = AIBackend(
             backend_type="openai",  # Gateway speaks OpenAI API
             url=f"{gateway_url}/v1",
             model="openclaw:voice",  # Maps to 'voice' agent in config
             api_key=gateway_token,
+            session_key=session_key,
             system_prompt=(
                 "This conversation is happening via real-time voice chat. "
                 "Keep responses concise and conversational — a few sentences "
@@ -246,6 +251,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
     audio_buffer = []
+    client_sample_rate = 16000  # Default, updated by client
     is_listening = False
     session_start = None
     
@@ -266,6 +272,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 if audio_buffer:
                     # Combine audio chunks
                     audio_data = np.concatenate(audio_buffer)
+                    duration = len(audio_data) / client_sample_rate
+                    logger.info(f"Audio buffer: {len(audio_buffer)} chunks, {len(audio_data)} samples, {duration:.2f}s @ {client_sample_rate}Hz, max={np.max(np.abs(audio_data)):.4f}")
+                    
+                    # Resample to 16kHz if needed (Whisper expects 16kHz)
+                    if client_sample_rate != 16000:
+                        target_len = int(len(audio_data) * 16000 / client_sample_rate)
+                        indices = np.linspace(0, len(audio_data) - 1, target_len)
+                        audio_data = np.interp(indices, np.arange(len(audio_data)), audio_data).astype(np.float32)
+                        logger.debug(f"Resampled {client_sample_rate}Hz -> 16kHz ({target_len} samples)")
                     
                     # Transcribe
                     logger.debug("Transcribing audio...")
@@ -353,6 +368,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 audio_bytes = base64.b64decode(msg["data"])
                 audio_np = np.frombuffer(audio_bytes, dtype=np.float32)
                 audio_buffer.append(audio_np)
+                # Track client sample rate (Safari uses 48kHz, Chrome may use 16kHz)
+                if "sample_rate" in msg:
+                    client_sample_rate = int(msg["sample_rate"])
                 
                 # VAD check - notify client if speech detected
                 if vad and len(audio_np) > 0:
