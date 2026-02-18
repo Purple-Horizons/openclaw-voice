@@ -2,6 +2,7 @@
 AI Backend module - connects to OpenAI, OpenClaw gateway, or custom backends.
 """
 
+import asyncio
 from typing import Optional, List, Dict, AsyncGenerator
 
 from loguru import logger
@@ -17,6 +18,7 @@ class AIBackend:
         model: str = "gpt-4o-mini",
         api_key: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        request_timeout_sec: float = 20.0,
     ):
         self.backend_type = backend_type
         self.url = url
@@ -27,6 +29,7 @@ class AIBackend:
             "Aim for 1-2 sentences unless more detail is needed."
         )
         self.conversation_history: List[Dict] = []
+        self.request_timeout_sec = request_timeout_sec
         self._client = None
         self._setup_client()
 
@@ -58,15 +61,19 @@ class AIBackend:
     async def _chat_openai_once(self, messages: List[Dict]) -> str:
         """Single non-stream completion call using pre-built messages."""
         try:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7,
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=220,
+                    temperature=0.4,
+                    timeout=self.request_timeout_sec,
+                ),
+                timeout=self.request_timeout_sec + 2,
             )
             return (response.choices[0].message.content or "").strip()
         except Exception as e:
-            logger.error(f"OpenAI non-stream API error: {e}")
+            logger.error(f"OpenAI non-stream API error: {repr(e)}")
             return ""
 
     async def chat(self, user_message: str) -> str:
@@ -129,8 +136,9 @@ class AIBackend:
             stream = await self._client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_tokens=500,
-                temperature=0.7,
+                max_tokens=220,
+                temperature=0.4,
+                timeout=self.request_timeout_sec,
                 stream=True,
             )
             logger.info("[🔄 PIPELINE] Gateway 流式响应开始")
@@ -152,6 +160,9 @@ class AIBackend:
                 if fallback_text:
                     full_response = fallback_text
                     yield fallback_text
+                else:
+                    full_response = "抱歉，我这边响应超时了。请再说一次。"
+                    yield full_response
 
             logger.info(f"[🔄 PIPELINE] AI 响应完成: {full_response[:80]}...")
 

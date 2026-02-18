@@ -394,12 +394,17 @@
                     setStatus('Processing...');
                     break;
                 case 'transcript':
-                    addTranscript('You', msg.text, 'user');
-                    setStatus('Getting response...');
                     // Reset streaming state
                     streamingText = '';
                     currentResponseElement = null;
                     audioQueue = [];
+
+                    if ((msg.text || '').trim()) {
+                        addTranscript('You', msg.text, 'user');
+                        setStatus('Getting response...');
+                    } else {
+                        setStatus(continuousMode ? '🎙️ 未识别到语音，继续监听...' : '未识别到语音');
+                    }
                     break;
                 case 'response_text':
                     // Legacy non-streaming response

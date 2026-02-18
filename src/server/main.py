@@ -353,10 +353,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 transcript = ""
                 audio_data = None
+                audio_energy = 0.0
 
                 if audio_buffer:
                     # Keep local copy for fallback batch STT if realtime session has no final transcript.
                     audio_data = np.concatenate(audio_buffer)
+                    if len(audio_data) > 0:
+                        audio_energy = float(np.mean(np.abs(audio_data)))
 
                 # Prefer realtime final transcript when available.
                 if asr_realtime_session is not None:
@@ -366,8 +369,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         logger.warning(f"Realtime ASR stop/get transcript failed: {e}")
 
-                # Fallback to batch transcription if needed.
-                if not transcript.strip() and audio_data is not None:
+                # Fallback to batch transcription only when speech was actually detected.
+                # This avoids silence hallucinations (e.g. recognizing pure silence as "嗯").
+                should_batch_fallback = (
+                    audio_data is not None
+                    and not transcript.strip()
+                    and (
+                        asr_realtime_session is None
+                        or getattr(asr_realtime_session, "saw_speech_started", False)
+                        # Realtime VAD may occasionally miss events on bursty input;
+                        # use signal energy as secondary indicator for fallback.
+                        or audio_energy > 0.008
+                    )
+                )
+                if should_batch_fallback:
                     logger.debug("Transcribing audio (batch fallback)...")
                     transcript = await stt.transcribe(audio_data)
 
@@ -452,6 +467,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         "text": full_response,
                     })
                     logger.info(f"Response complete: {full_response[:100]}...")
+                else:
+                    # Important for continuous mode UI state machine:
+                    # always close this turn even when no transcript is recognized.
+                    await websocket.send_json({
+                        "type": "response_complete",
+                        "text": "",
+                    })
+                    logger.info("No transcript recognized; sent empty response_complete")
                 
                 audio_buffer = []
                 asr_realtime_session = None

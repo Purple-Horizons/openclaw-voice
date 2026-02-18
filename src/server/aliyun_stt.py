@@ -180,6 +180,7 @@ class AliyunASRRealtimeSession:
 
         self.final_transcript = ""
         self.partial_transcript = ""
+        self.saw_speech_started = False
 
     async def start(self):
         """Open realtime WS and configure server-VAD transcription."""
@@ -244,6 +245,8 @@ class AliyunASRRealtimeSession:
                 break
 
             events.append(event)
+            if event.get("type") == "speech_started":
+                self.saw_speech_started = True
             if event.get("type") == "final":
                 self.final_transcript = (event.get("text") or "").strip()
             elif event.get("type") == "partial":
