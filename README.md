@@ -20,6 +20,7 @@ Talk to your AI like you talk to Alexa — but self-hosted, private, and connect
 | 🔌 **Any AI Backend** | OpenAI, Claude, or full OpenClaw agent with memory and tools. |
 | 🌐 **Browser-Based** | No app install. Works on desktop and mobile. |
 | 🚗 **Continuous Mode** | Hands-free conversation. Auto-listens after each response. |
+| ☁️ **Server VAD (Aliyun Realtime)** | Uses qwen3-asr-flash-realtime VAD events (`speech_started`/`speech_stopped`) to auto-end turns without local torch/silero. |
 
 ## Quick Start
 
@@ -46,6 +47,16 @@ PYTHONPATH=. python -m src.server.main
 # Open http://localhost:8765
 ```
 
+## Smoke Test (STT + OpenClaw roundtrip)
+
+```bash
+python scripts/smoke_ws_roundtrip.py \
+  --ws ws://127.0.0.1:8765/ws \
+  --audio /path/to/test.ogg
+```
+
+Expected: `SMOKE PASS` with non-empty transcript and non-empty `response_complete`.
+
 ## For OpenClaw Agents (Auto-Install)
 
 One-liner for AI agents to self-install:
@@ -71,8 +82,11 @@ PYTHONPATH=. ELEVENLABS_API_KEY="$ELEVENLABS_API_KEY" OPENAI_API_KEY="$OPENAI_AP
 | `OPENCLAW_GATEWAY_URL` | No | — | OpenClaw gateway URL for full agent |
 | `OPENCLAW_GATEWAY_TOKEN` | No | — | Gateway auth token |
 | `OPENCLAW_PORT` | No | `8765` | Server port |
-| `OPENCLAW_STT_MODEL` | No | `base` | Whisper model size |
-| `OPENCLAW_STT_DEVICE` | No | `auto` | Device: `auto`, `cpu`, `cuda`, `mps` |
+| `OPENCLAW_STT_PROVIDER` | No | `aliyun` | STT provider: `aliyun` or `whisper` |
+| `OPENCLAW_ALIYUN_ASR_MODE` | No | `realtime` | Aliyun STT mode: `realtime` (server VAD) or `batch` |
+| `OPENCLAW_ALIYUN_REALTIME_VAD_SILENCE_MS` | No | `900` | Server VAD silence threshold (ms) |
+| `OPENCLAW_STT_MODEL` | No | `base` | Whisper model size (whisper only) |
+| `OPENCLAW_STT_DEVICE` | No | `auto` | Device: `auto`, `cpu`, `cuda`, `mps` (whisper only) |
 | `OPENCLAW_REQUIRE_AUTH` | No | `false` | Require API keys for clients |
 
 *One of `OPENAI_API_KEY` or `OPENCLAW_GATEWAY_URL` required.
@@ -198,7 +212,7 @@ Connect to `ws://localhost:8765/ws`:
 // Receive events:
 { "type": "transcript", "text": "...", "final": true }
 { "type": "response_chunk", "text": "..." }        // Streaming text
-{ "type": "audio_chunk", "data": "...", "sample_rate": 24000 }  // Streaming audio
+{ "type": "audio_chunk", "data": "...", "sample_rate": 16000 }  // Streaming audio (configurable via OPENCLAW_TTS_OUTPUT_SAMPLE_RATE)
 { "type": "response_complete", "text": "..." }     // Full response
 { "type": "vad_status", "speech_detected": true }  // VAD feedback
 ```

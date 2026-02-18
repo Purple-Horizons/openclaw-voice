@@ -19,16 +19,18 @@ faster-whisper>=1.0.0
 
 # Text-to-Speech
 # chatterbox-tts  # Install from source for now
-torch>=2.1.0
-torchaudio>=2.1.0
-transformers>=4.36.0
+# Optional heavy deps (needed only for local TTS / local VAD paths):
+# torch>=2.1.0
+# torchaudio>=2.1.0
+# transformers>=4.36.0
 
-# Voice Activity Detection
-silero-vad>=4.0.0
+# Voice Activity Detection (optional)
+# silero-vad>=4.0.0
 
 # AI Backend
 openai>=1.6.0
 httpx>=0.26.0
+dashscope>=1.25.6
 
 # Utilities
 pyyaml>=6.0.1
@@ -41,3 +43,4 @@ pytest-asyncio>=0.23.0
 black>=23.12.0
 ruff>=0.1.0
 elevenlabs>=1.0.0
+aiohttp

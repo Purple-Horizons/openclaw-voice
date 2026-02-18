@@ -312,9 +312,18 @@
         let audioProcessor = null;
         let mediaStream = null;
         let isRecording = false;
+        let isProcessing = false;
         let continuousMode = false;
-        let silenceTimer = null;
-        let silenceThreshold = 1500; // ms of silence before stopping
+
+        // Client-side VAD (energy based, adaptive noise floor)
+        let silenceThreshold = 1000; // ms of silence before stopping in continuous mode
+        let dynamicNoiseFloor = 0.003;
+        let lastSpeechTime = 0;
+        let recordStartTime = 0;
+        let hasSpeechInTurn = false;
+        let serverVadEnabled = false;
+        let serverVadLastEventAt = 0;
+        const maxRecordMs = 12000; // hard cap to avoid endless recording in noisy env
         
         // Get API key from URL params or localStorage
         function getApiKey() {
@@ -375,9 +384,13 @@
         function handleMessage(msg) {
             switch (msg.type) {
                 case 'listening_started':
+                    isProcessing = false;
+                    serverVadEnabled = false;
+                    serverVadLastEventAt = Date.now();
                     setStatus(continuousMode ? '🎙️ Listening (continuous)...' : 'Listening...', true);
                     break;
                 case 'listening_stopped':
+                    isProcessing = true;
                     setStatus('Processing...');
                     break;
                 case 'transcript':
@@ -394,6 +407,7 @@
                     break;
                 case 'response_chunk':
                     // Streaming text chunk
+                    isProcessing = true;
                     streamingText += msg.text;
                     updateStreamingTranscript(streamingText);
                     setStatus('Speaking...', true);
@@ -402,10 +416,37 @@
                     // Queue audio chunk for playback
                     queueAudioChunk(msg.data, msg.sample_rate);
                     break;
+                case 'vad_status':
+                    // Prefer server-side VAD events when available.
+                    if (msg.event === 'speech_started') {
+                        serverVadEnabled = true;
+                        serverVadLastEventAt = Date.now();
+                        hasSpeechInTurn = true;
+                    } else if (msg.event === 'speech_stopped') {
+                        serverVadEnabled = true;
+                        serverVadLastEventAt = Date.now();
+                        if (continuousMode && isRecording) {
+                            stopRecording();
+                        }
+                    }
+                    break;
                 case 'response_complete':
                     // Finalize the response
                     if (currentResponseElement) {
                         currentResponseElement.innerHTML = `<strong>AI:</strong> ${renderMarkdown(msg.text)}`;
+                    }
+                    isProcessing = false;
+
+                    // If no audio is queued/playing (or autoplay blocked), avoid sticky "Processing...".
+                    if (!isPlayingQueue && audioQueue.length === 0) {
+                        if (continuousMode) {
+                            setStatus('🎙️ Ready to listen...', true);
+                            setTimeout(() => {
+                                if (continuousMode && !isProcessing && !isRecording) startRecording();
+                            }, 300);
+                        } else {
+                            setStatus('Ready');
+                        }
                     }
                     break;
                 case 'audio_response':
@@ -480,10 +521,11 @@
         }
         
         function onAudioComplete() {
+            isProcessing = false;
             if (continuousMode) {
                 setStatus('🎙️ Ready to listen...', true);
                 setTimeout(() => {
-                    if (continuousMode) startRecording();
+                    if (continuousMode && !isProcessing && !isRecording) startRecording();
                 }, 300);
             } else {
                 setStatus('Ready');
@@ -532,7 +574,7 @@
         
         // Audio recording
         async function startRecording() {
-            if (isRecording) return;
+            if (isRecording || isProcessing) return;
             
             try {
                 // Reuse stream if available, otherwise get new one
@@ -550,23 +592,57 @@
                 audioContext = new AudioContext({ sampleRate: 16000 });
                 audioSource = audioContext.createMediaStreamSource(mediaStream);
                 audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-                
-                let lastSoundTime = Date.now();
-                
+
+                recordStartTime = Date.now();
+                lastSpeechTime = recordStartTime;
+                hasSpeechInTurn = false;
+
                 audioProcessor.onaudioprocess = (e) => {
                     if (isRecording && ws && ws.readyState === WebSocket.OPEN) {
                         const audioData = e.inputBuffer.getChannelData(0);
                         const base64 = float32ToBase64(audioData);
                         ws.send(JSON.stringify({ type: 'audio', data: base64 }));
                         
-                        // Simple VAD: check if audio has energy
                         if (continuousMode) {
-                            const energy = audioData.reduce((sum, val) => sum + Math.abs(val), 0) / audioData.length;
-                            if (energy > 0.01) {
-                                lastSoundTime = Date.now();
-                            } else if (Date.now() - lastSoundTime > silenceThreshold) {
-                                // Silence detected - stop recording
+                            const now = Date.now();
+
+                            // Prefer server-side VAD if we have seen events recently.
+                            const serverVadRecent = serverVadEnabled && (now - serverVadLastEventAt < 5000);
+
+                            // Local fallback VAD when server events are unavailable.
+                            if (!serverVadRecent) {
+                                // RMS energy
+                                let sqSum = 0;
+                                for (let i = 0; i < audioData.length; i++) {
+                                    const v = audioData[i];
+                                    sqSum += v * v;
+                                }
+                                const rms = Math.sqrt(sqSum / audioData.length);
+
+                                // Slowly track noise floor when likely silent
+                                if (rms < dynamicNoiseFloor * 1.8) {
+                                    dynamicNoiseFloor = dynamicNoiseFloor * 0.98 + rms * 0.02;
+                                }
+
+                                const speechStartThreshold = Math.max(dynamicNoiseFloor * 3.0, 0.012);
+                                const speechEndThreshold = Math.max(dynamicNoiseFloor * 1.8, 0.006);
+
+                                if (rms > speechStartThreshold) {
+                                    hasSpeechInTurn = true;
+                                    lastSpeechTime = now;
+                                }
+
+                                // End of utterance: had speech, then sustained silence
+                                if (hasSpeechInTurn && rms < speechEndThreshold && (now - lastSpeechTime) > silenceThreshold) {
+                                    stopRecording();
+                                    return;
+                                }
+                            }
+
+                            // Safety cap in noisy environments
+                            if ((now - recordStartTime) > maxRecordMs) {
                                 stopRecording();
+                                return;
                             }
                         }
                     }
@@ -614,6 +690,7 @@
             }
             
             if (ws && ws.readyState === WebSocket.OPEN) {
+                isProcessing = true;
                 ws.send(JSON.stringify({ type: 'stop_listening' }));
             }
         }
